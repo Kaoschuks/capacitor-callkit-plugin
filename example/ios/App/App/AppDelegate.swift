@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import CapacitorCallkitPlugin
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {

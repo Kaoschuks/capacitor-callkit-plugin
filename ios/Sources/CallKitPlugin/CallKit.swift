@@ -1,8 +1,7 @@
 import Foundation
 
 @objc public class CallKit: NSObject {
-    @objc public func echo(_ value: String) -> String {
-        print(value)
+    @objc public func register(_ value: String) -> String {
         return value
     }
 }
