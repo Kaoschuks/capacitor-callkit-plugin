@@ -13,21 +13,13 @@ npx cap sync
 
 <docgen-index>
 
-* [`register()`](#register)
+
 
 </docgen-index>
 
 <docgen-api>
 <!--Update the source file JSDoc comments and rerun docgen to update the docs below-->
 
-### register()
 
-```typescript
-register() => Promise<any>
-```
-
-**Returns:** <code>Promise&lt;any&gt;</code>
-
---------------------
 
 </docgen-api>
