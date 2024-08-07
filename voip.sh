@@ -4,10 +4,11 @@ function main {
     local connectionId=${1:?"connectionId should be specified"}
     local token=${2:?"Enter device token that you received on register listener"}
     local bundleId=${3:-"Enter your Bundle Id"}
-    local username=${4:-"Anonymus"}
+    local hasVideo=${4:-"false"}
+    local username=${5:-"Anonymus"}
 
     # Check if the certificate file exists
-    if [[ ! -f "app.pem" ]]; then
+    if [[ ! -f "../app.pem" ]]; then
         echo "Certificate file app.pem not found!"
         exit 1
     fi
@@ -19,7 +20,8 @@ function main {
         "content-available": "1"
     },
     "Username": "${username}",
-    "ConnectionId": "${connectionId}"
+    "ConnectionId": "${connectionId}",
+    "hasVideo": "${hasVideo}"
 }
 EOF
 )

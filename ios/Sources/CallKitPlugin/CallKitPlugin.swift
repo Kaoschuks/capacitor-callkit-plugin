@@ -74,10 +74,10 @@ public class CallKitPlugin: CAPPlugin, CAPBridgedPlugin, PKPushRegistryDelegate 
         }
     }
 
-    public func incomingCall(from: String, connectionId: String) {
+    public func incomingCall(from: String, connectionId: String, hasVideo: String) {
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: from)
-        update.hasVideo = true
+        update.hasVideo = hasVideo == "false" ? false : true
         update.supportsDTMF = false
         update.supportsHolding = true
         update.supportsGrouping = false
@@ -174,7 +174,8 @@ extension CallKitPlugin: CXProviderDelegate {
         }
 
         let username = (payload.dictionaryPayload["Username"] as? String) ?? "Anonymous"
-        incomingCall(from: username, connectionId: connectionId)
+        let hasVideo = (payload.dictionaryPayload["hasVideo"] as? String) ?? "false"
+        incomingCall(from: username, connectionId: connectionId, hasVideo: hasVideo)
         completion()
     }
 }
