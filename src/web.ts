@@ -4,7 +4,7 @@ import type { CallKitPlugin } from './definitions';
 
 export class CallKitWeb extends WebPlugin implements CallKitPlugin {
 
-  async register(): Promise<any> {
+  // async register(): Promise<any> {
     
-  }
+  // }
 }

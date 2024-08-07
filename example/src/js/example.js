@@ -1,31 +1,22 @@
 import { CallKit } from 'capacitor-callkit-plugin';
 
-CallKit.addListener("plugin_events", (response) => {
-    plugin_events(response.status, response)
-})
-window.registerCallKit = async () => {
-    try {
-        const resp = await CallKit.register()
-        console.log(resp.status)
-        console.log(resp.token)
-    } catch (error) {
-        console.log(error)
-    }
-}
-
 const plugin_events = (status, data) => {
     try {
         switch (status) {
             case "on_call_accepted":
                 console.log("Call Accepted for " + data)
+                alert(`Call accepted from ${data.username}`)
                 break;
             case "on_call_rejected":
                 console.log("Call Rejected for " + data)
+                alert(`Call rejected from ${data.username}`)
                 break;
             case "on_error":
                 console.error("Call Plugin Error ", data.error)
                 break;
             case "on_token":
+                var token = document.getElementById('token')
+                token.innerHTML = `Token Value: ${resp.token || response.token}`
                 console.info("Call Plugin Token generated ", data.token)
                 break;
             case "on_registration":
@@ -38,4 +29,12 @@ const plugin_events = (status, data) => {
     } catch (error) {
         console.log(error)
     }
+}
+
+try {
+    CallKit.addListener("plugin_events", (response) => {
+        plugin_events(response.status, response)
+    })
+} catch (error) {
+    console.log(error)
 }

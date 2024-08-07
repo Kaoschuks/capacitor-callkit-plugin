@@ -4,47 +4,55 @@ import UIKit
 import CallKit
 import PushKit
 
+/**
+ * Please read the Capacitor iOS Plugin Development Guide
+ * here: https://capacitorjs.com/docs/plugins/ios
+ */
 @objc(CallKitPlugin)
-public class CallKitPlugin: CAPPlugin, CAPBridgedPlugin {
+public class CallKitPlugin: CAPPlugin, CAPBridgedPlugin, PKPushRegistryDelegate {
+    struct CallConfig {
+        let connectionId: String
+        let username: String
+    }
     public let identifier = "CallKitPlugin"
     public let jsName = "CallKit"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "register", returnType: CAPPluginReturnPromise),
+        // CAPPluginMethod(name: "register", returnType: CAPPluginReturnPromise),
     ]
     private let callController = CXCallController()
     private var provider: CXProvider?
     private let voipRegistry = PKPushRegistry(queue: nil)
     private var connectionIdRegistry: [UUID: CallConfig] = [:]
     private let implementation = CallKit()
-    private var voipToken: String?
 
+    // MARK: - Plugin Lifecycle
     public override func load() {
         super.load()
-        guard let bridge = self.bridge else { return }
+        setupVoIP()
     }
-
-    @objc func register(_ call: CAPPluginCall) {
-        // config PushKit
-        voipRegistry.delegate = self
-        voipRegistry.desiredPushTypes = [.voIP]
-        
-        let config = CXProviderConfiguration(localizedName: "Call Plugin")
-        config.supportsVideo = true
-        config.supportedHandleTypes = [.emailAddress]
-        
-        provider = CXProvider(configuration: config)
-        provider?.setDelegate(self, queue: DispatchQueue.main)
-
-        if let token = voipToken {
-            call.resolve([
-                "status": "Plugin Registered",
-                "token": token
-            ])
+    
+    // MARK: - Plugin Background Call
+    static func performBackgroundTask(completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        DispatchQueue.global().async {
+            CallKitPlugin().setupVoIP()
+            completionHandler(.newData)
         }
     }
 
-    public func notifyEvent(eventName: String, uuid: UUID?, error: String? = nil, token: String? = nil) {
-        if let uuid = uuid, let config = connectionIdRegistry[uuid], error == nil {
+    private func setupVoIP() {
+        voipRegistry.delegate = self
+        voipRegistry.desiredPushTypes = [.voIP]
+
+        let config = CXProviderConfiguration(localizedName: "Call Plugin")
+        config.supportsVideo = true
+        config.supportedHandleTypes = [.emailAddress]
+
+        provider = CXProvider(configuration: config)
+        provider?.setDelegate(self, queue: DispatchQueue.main)
+    }
+
+    public func notifyEvent(eventName: String, uuid: UUID, error: String? = nil, token: String? = nil) {
+        if let config = connectionIdRegistry[uuid], error == nil {
             self.notifyListeners("plugin_events", data: [
                 "status": eventName,
                 "connectionId": config.connectionId,
@@ -74,64 +82,51 @@ public class CallKitPlugin: CAPPlugin, CAPBridgedPlugin {
         update.supportsHolding = true
         update.supportsGrouping = false
         update.supportsUngrouping = false
+
         let uuid = UUID()
         connectionIdRegistry[uuid] = CallConfig(connectionId: connectionId, username: from)
-        provider?.reportNewIncomingCall(with: uuid, update: update, completion: { [weak self] error in
-            if let error = error {
-                self?.notifyEvent(eventName: "error", uuid: uuid, error: error.localizedDescription)
-                self?.showLocalNotification("accepted", error.localizedDescription)
+        provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+            if let self = self, let error = error {
+                self.notifyEvent(eventName: "error", uuid: uuid, error: error.localizedDescription)
+                self.showLocalNotification(eventName: "accepted", message: error.localizedDescription)
             }
-        })
+        }
     }
 
     public func endCall(uuid: UUID) {
         let transaction = CXTransaction(action: CXEndCallAction(call: uuid))
-        callController.request(transaction, completion: { error in
+        callController.request(transaction) { error in
             if let error = error {
                 print("Error ending call: \(error.localizedDescription)")
             }
-        })
+        }
     }
 }
 
+// MARK: CallKit events handler
 extension CallKitPlugin: CXProviderDelegate {
 
     public func providerDidReset(_ provider: CXProvider) {
-        print("providerDidReset called")
-        notifyEvent(eventName: "on_reset", uuid: nil, error: "Provider did reset")
-        
-        let calls = callController.callObserver.calls
-        if calls.isEmpty {
-            print("No active calls")
-        } else {
-            for call in calls {
-                print("Active call: \(call.uuid), hasConnected: \(call.hasConnected), hasEnded: \(call.hasEnded)")
-            }
-        }
-        
-        connectionIdRegistry.removeAll()
+        notifyEvent(eventName: "on_error", uuid: UUID(), error: "Provider did reset")
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        print("call answered")
         notifyEvent(eventName: "on_call_accepted", uuid: action.callUUID)
-        showLocalNotification("accepted", "Call answered")
+        showLocalNotification(eventName: "accepted", message: "Call accepted")
 
         let answerCallAction = CXAnswerCallAction(call: action.callUUID)
         let transaction = CXTransaction(action: answerCallAction)
 
-        callController.request(transaction, completion: { error in
+        callController.request(transaction) { error in
             if let error = error {
                 print("Error answering call: \(error.localizedDescription)")
             }
-        })
+        }
 
-        endCall(uuid: action.callUUID)
         action.fulfill()
     }
 
     public func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        print("call declined")
         notifyEvent(eventName: "on_call_rejected", uuid: action.callUUID)
         endCall(uuid: action.callUUID)
         action.fulfill()
@@ -142,7 +137,7 @@ extension CallKitPlugin: CXProviderDelegate {
         action.fulfill()
     }
 
-    func openApp() {
+    private func openApp() {
         if let url = URL(string: "agentpath://"), UIApplication.shared.canOpenURL(url) {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
         } else {
@@ -150,10 +145,10 @@ extension CallKitPlugin: CXProviderDelegate {
         }
     }
 
-    func showLocalNotification(_ eventName: String, _ username: String) {
+    private func showLocalNotification(eventName: String, message: String) {
         let content = UNMutableNotificationContent()
         content.title = "Call Status"
-        content.body = "\(username) has \(eventName.lowercased()) the call."
+        content.body = "\(message) has \(eventName.lowercased()) the call."
         content.sound = UNNotificationSound.default
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
@@ -165,49 +160,21 @@ extension CallKitPlugin: CXProviderDelegate {
             }
         }
     }
-}
-
-extension CallKitPlugin: PKPushRegistryDelegate {
-
+    
+    // MARK: PushKit events handler
     public func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
-        let parts = pushCredentials.token.map { String(format: "%02.2hhx", $0) }
-        let token = parts.joined()
-        voipToken = token
-        notifyEvent(eventName: "on_token", uuid: nil, token: token)
+        let token = pushCredentials.token.map { String(format: "%02.2hhx", $0) }.joined()
+        notifyEvent(eventName: "on_token", uuid: UUID(), token: token)
     }
 
     public func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
         guard let connectionId = payload.dictionaryPayload["ConnectionId"] as? String else {
+            completion()
             return
         }
 
         let username = (payload.dictionaryPayload["Username"] as? String) ?? "Anonymous"
-        self.incomingCall(from: username, connectionId: connectionId)
+        incomingCall(from: username, connectionId: connectionId)
         completion()
-    }
-}
-
-extension CallKitPlugin {
-    struct CallConfig {
-        let connectionId: String
-        let username: String
-    }
-}
-
-extension AppDelegate: UNUserNotificationCenterDelegate {
-    public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
-        // Handle notification interaction here
-        completionHandler()
-    }
-
-    func setupNotifications() {
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { (granted, error) in
-            if granted {
-                print("Notification permissions granted")
-            } else {
-                print("Notification permissions denied")
-            }
-        }
     }
 }

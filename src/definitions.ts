@@ -1,3 +1,3 @@
 export interface CallKitPlugin {
-  register(): Promise<any>;
+  // register(): Promise<any>;
 }
