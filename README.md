@@ -94,16 +94,6 @@ eg: `./voip.sh 123456789 <deviceToken> com.example.app false Anonymous`
 - if you'll go to production version, you will need to do request to `api.push.apple.com/3/device/${token}` instead of
   `api.development.push.apple.com/3/device/${token}`, otherwise you will receive `BadDeviceToken` issue
   
-If you will have some complication, feel free to write me email at [yurii.leso@bfine.cz](mailto:yurii.leso@bfine.cz?subject=Plugin%20issue%20%23capacitor-callkit-plugin%20%23gitlab&body=Hello%20Yurii%2C%0D%0AI%20faced%20with%20the%20problem%20...%0D%0A...%0D%0A%0D%0AYou%20may%20contact%20me%20at%20WhatsApp%3A%20....%20or%20Telegram%3A%20....%20or%20...)
-
-### Donation
-If this project help you reduce time to develop, you can give me a cup of coffee :)
-
-[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](yurii.leso@bfine.cz)
-
-**Links**
-- https://revolut.me/yleso
-- https://paypal.me/yleso
 
 ## API
 
