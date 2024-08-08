@@ -8,7 +8,7 @@ function main {
     local username=${5:-"Anonymus"}
 
     # Check if the certificate file exists
-    if [[ ! -f "../app.pem" ]]; then
+    if [[ ! -f "app.pem" ]]; then
         echo "Certificate file app.pem not found!"
         exit 1
     fi
@@ -32,7 +32,7 @@ EOF
     -H "apns-push-type: voip" \
     -H "apns-priority: 10" \
     --http2 \
-    --cert ../app.pem \
+    --cert app.pem \
 "https://api.development.push.apple.com/3/device/${token}"
 }
 
