@@ -83,8 +83,9 @@ Once the plugin is installed, the only thing that you need to do is to push a VO
 ```
 
 You can use my script (bellow) to test it out: 
-`./voip.sh <connectionId> <deviceToken> <bundleId> <hasVideo> <username>`
-eg: `./voip.sh 123456789 <deviceToken> com.example.app false Anonymous`
+`./voip.sh <connectionId> <deviceToken> <bundleId> <videoCall> <username>`
+eg: `./voip.sh 123456789 XXXXXXXXXXXXXXXXXXXXXXXXXXX com.example.app false Anonymous`  -------- audio call
+eg: `./voip.sh 123456789 XXXXXXXXXXXXXXXXXXXXXXXXXXX com.example.app true Anonymous`  -------- video call
 
 
 ### Pay attention:
@@ -97,7 +98,6 @@ eg: `./voip.sh 123456789 <deviceToken> com.example.app false Anonymous`
 
 ## API
 
-* [`register()`](#register)
 * [`addListener("plugin_events", handler)`](#addlistener)
 * [Interfaces](#interfaces)
 
