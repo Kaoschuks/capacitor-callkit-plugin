@@ -32,7 +32,7 @@ EOF
     -H "apns-push-type: voip" \
     -H "apns-priority: 10" \
     --http2 \
-    --cert app.pem \
+    --cert ../app.pem \
 "https://api.development.push.apple.com/3/device/${token}"
 }
 

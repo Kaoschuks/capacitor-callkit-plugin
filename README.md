@@ -86,6 +86,7 @@ You can use my script (bellow) to test it out:
 `./voip.sh <connectionId> <deviceToken> <bundleId> <hasVideo> <username>`
 eg: `./voip.sh 123456789 <deviceToken> com.example.app false Anonymous`
 
+
 ### Pay attention:
 
 - replace  <YOUR_BUNDLE_ID> with your app bundle 
