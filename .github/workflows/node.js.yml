@@ -1,0 +1,87 @@
+name: Build and Publish npm Package
+
+on:
+  push:
+    branches: [ "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22.x"
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Lint
+      run: npm run eslint
+      continue-on-error: true
+
+    - name: Build
+      run: npm run build
+
+    - name: Test
+      run: npm test
+
+    - name: Pack
+      run: npm pack
+
+    - name: Upload package tarball
+      uses: actions/upload-artifact@v4
+      with:
+        name: npm-package
+        path: ionic-callkit-*.tgz
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22.x"
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Check tag matches package version
+      run: |
+        PKG_VERSION="v$(node -p "require('./package.json').version")"
+        if [ "$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
+          echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+          exit 1
+        fi
+
+    - name: Download package tarball
+      uses: actions/download-artifact@v4
+      with:
+        name: npm-package
+
+    - name: Publish to npm
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        if [[ "$VERSION" == *-* ]]; then
+          # Prerelease, e.g. 1.0.0-beta.1 -> dist-tag "beta"
+          TAG="$(echo "${VERSION#*-}" | cut -d. -f1)"
+        else
+          TAG="latest"
+        fi
+        npm publish ionic-callkit-*.tgz --access public --provenance --tag "$TAG"
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
