@@ -43,6 +43,13 @@ export interface CallKitPlugin {
   /** Mark an outgoing call as connected (remote side picked up). */
   setCallActive(options: CallIdOptions): Promise<void>;
 
+  /**
+   * Report the call's connection state to the system (callkeep's `setConnectionState`),
+   * e.g. `dialing` while your signalling connects, `active` once media flows.
+   * Emits `callStateChanged`.
+   */
+  setCallState(options: { callId: string; state: SettableCallState }): Promise<void>;
+
   /** Hang up a call locally. Emits `callEnded`. */
   endCall(options: CallIdOptions): Promise<void>;
 
@@ -75,10 +82,10 @@ export interface CallKitPlugin {
   /** Play DTMF digits on a call. Emits `dtmf`. */
   sendDTMF(options: { callId: string; digits: string }): Promise<void>;
 
-  /** List available audio outputs. Android only. */
+  /** List available audio routes. Android and iOS. */
   getAudioRoutes(): Promise<{ routes: AudioRoute[] }>;
 
-  /** Select an audio output. Android only. */
+  /** Select an audio route. Android and iOS. */
   setAudioRoute(options: { callId: string; route: AudioRouteType }): Promise<void>;
 
   // ─── Android specifics ─────────────────────────────────────────────────────
@@ -90,8 +97,33 @@ export interface CallKitPlugin {
    */
   setAvailable(options: { available: boolean }): Promise<void>;
 
-  /** Tell the plugin the JS layer is ready to handle calls. Android only. */
+  /**
+   * Tell the plugin the JS layer is ready to handle calls. Android only.
+   * Adding a `callAnswered` listener counts as reachable too. Answered calls are ended if
+   * the app isn't reachable within `android.answerReachabilityTimeout`.
+   */
   setReachable(): Promise<void>;
+
+  /**
+   * Allow or refuse concurrent calls. When `false`, a new incoming call while another is in
+   * progress is refused and `incomingCallFailed` is emitted with `error: 'busy'`, and
+   * `startCall` rejects. Persisted, so pushes handled while the app is killed respect it.
+   */
+  setCanMakeMultipleCalls(options: { allow: boolean }): Promise<void>;
+  // On iOS a refused push-driven call is briefly reported and ended (iOS requires every VoIP
+  // push to report a call), so it may appear as a missed call.
+
+  /**
+   * Events that happened before JS attached (e.g. the call was answered from the lock
+   * screen during a cold start), oldest first. They are also delivered to listeners; use
+   * this to route directly at startup. Events with `restored: true` come from a previous
+   * app process that died before delivering them — their calls no longer exist.
+   * Kept until `clearInitialEvents()`. Android and iOS (empty on web).
+   */
+  getInitialEvents(): Promise<{ events: InitialEvent[] }>;
+
+  /** Forget the events returned by `getInitialEvents()`. */
+  clearInitialEvents(): Promise<void>;
 
   /**
    * Whether the calling account is registered and enabled.
@@ -111,7 +143,10 @@ export interface CallKitPlugin {
   /** Open the settings page to grant full-screen intents (Android 14+). */
   openFullScreenIntentSettings(): Promise<void>;
 
-  /** Bring the app to the foreground (e.g. after answering from the lock screen). Android only. */
+  /**
+   * Bring the app to the foreground (e.g. after answering from the lock screen). Android only;
+   * rejects as unimplemented on iOS, which doesn't allow it.
+   */
   backToForeground(): Promise<void>;
 
   /** Currently tracked calls. */
@@ -138,6 +173,10 @@ export interface CallKitPlugin {
   addListener(eventName: 'callRejected', listenerFunc: (data: CallEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'muted', listenerFunc: (data: MutedEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'held', listenerFunc: (data: HeldEvent) => void): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'callStateChanged',
+    listenerFunc: (data: CallStateChangedEvent) => void,
+  ): Promise<PluginListenerHandle>;
   addListener(eventName: 'dtmf', listenerFunc: (data: DtmfEvent) => void): Promise<PluginListenerHandle>;
   addListener(
     eventName: 'speakerChanged',
@@ -166,7 +205,10 @@ export interface CallKitPlugin {
 // ─── Options ─────────────────────────────────────────────────────────────────
 
 export interface CallSetupOptions {
-  /** Name shown in the system call UI / calling account. Defaults to the app label. */
+  /**
+   * Name of the calling account on Android. Defaults to the app label.
+   * iOS always shows the app's display name (CallKit no longer accepts a custom one).
+   */
   appName?: string;
   /** Default: false */
   supportsVideo?: boolean;
@@ -204,8 +246,14 @@ export interface AndroidSetupOptions {
         notificationTitle?: string;
         notificationIcon?: string;
       };
-  /** Allow more than one simultaneous call. Default: true. */
+  /** Allow more than one simultaneous call. Default: true. See `setCanMakeMultipleCalls`. */
   canMakeMultipleCalls?: boolean;
+  /**
+   * End an answered call if the app hasn't called `setReachable()` (or added a
+   * `callAnswered` listener) within this many milliseconds — e.g. the WebView failed to
+   * start after answering from the lock screen. Default: 10000. 0 disables.
+   */
+  answerReachabilityTimeout?: number;
   /**
    * If set, an incoming call is dropped when the JS layer hasn't called
    * `setReachable()` within this many milliseconds.
@@ -222,6 +270,20 @@ export interface IOSSetupOptions {
   maximumCallsPerCallGroup?: number;
   /** Default: false */
   includesCallsInRecents?: boolean;
+  /** CallKit handle type for `handle` values. Default: `generic`. */
+  handleType?: 'generic' | 'number' | 'email';
+  /**
+   * Audio session CallKit activates for the call (callkeep's `audioSession` setting).
+   * Set `autoConfigure: false` if your media SDK configures AVAudioSession itself.
+   */
+  audioSession?: {
+    /** Default: true */
+    autoConfigure?: boolean;
+    /** Raw `AVAudioSession.CategoryOptions`. Default: allowBluetooth | allowBluetoothA2DP. */
+    categoryOptions?: number;
+    /** `AVAudioSession.Mode` raw value, e.g. `AVAudioSessionModeVoiceChat`. Default: `AVAudioSessionModeDefault`. */
+    mode?: string;
+  };
 }
 
 export interface CallIdOptions {
@@ -278,6 +340,23 @@ export interface ActiveCall {
   callId: string;
   callerName?: string;
   handle?: string;
+  state?: CallState;
+}
+
+/** Connection states reported by `callStateChanged` / `getActiveCalls`. */
+export type CallState = 'initializing' | 'new' | 'ringing' | 'dialing' | 'active' | 'held' | 'disconnected' | 'pulling';
+
+/** States an app may set with `setCallState`. */
+export type SettableCallState = 'initializing' | 'ringing' | 'dialing' | 'active' | 'held';
+
+export interface InitialEvent {
+  /** Event name, e.g. `incomingCall`, `callAnswered`. */
+  name: string;
+  data: Record<string, unknown>;
+  /** Epoch milliseconds. */
+  timestamp: number;
+  /** From a previous app process that died before delivering it; the call is gone. */
+  restored: boolean;
 }
 
 // ─── Events ──────────────────────────────────────────────────────────────────
@@ -319,6 +398,10 @@ export interface CallFailedEvent extends CallEvent {
 
 export interface MutedEvent extends CallEvent {
   muted: boolean;
+}
+
+export interface CallStateChangedEvent extends CallEvent {
+  state: CallState;
 }
 
 export interface HeldEvent extends CallEvent {

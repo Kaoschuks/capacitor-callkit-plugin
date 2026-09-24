@@ -6,6 +6,17 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { CallKit } from 'ionic-callkit';
 import type { CallKitPermissionStatus } from 'ionic-callkit';
 
+/** crypto.randomUUID needs a secure context; fall back for custom-scheme WebViews. */
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export type CallStatus = 'ringing' | 'dialing' | 'active' | 'ended';
 
 export interface DemoCall {
@@ -37,6 +48,16 @@ export class CallService {
   readonly log = signal<string[]>([]);
   readonly calls = signal<Record<string, DemoCall>>({});
   readonly activeCalls = computed(() => Object.values(this.calls()).filter((c) => c.status !== 'ended'));
+  readonly oneCallAtATime = signal(false);
+
+  /** Ready-to-run test push command for this device (run from the plugin repo root). */
+  readonly pushCommand = computed(() => {
+    const token = this.token();
+    if (!token) return null;
+    return this.platform === 'ios'
+      ? `dev/sendVoip.sh "$(uuidgen)" ${token} com.example.plugin false Alice`
+      : `dev/sendFcm.sh service-account.json ${token} "$(uuidgen)" Alice`;
+  });
 
   async init(): Promise<void> {
     if (this.initialised) return;
@@ -87,8 +108,23 @@ export class CallService {
     });
     await this.listen('audioRouteChanged', () => undefined);
     await this.listen('showIncomingCallUi', () => undefined);
-    await this.listen('incomingCallFailed', () => undefined);
+    await this.listen('incomingCallFailed', ({ callId, error }) => {
+      // With one call at a time, tell your backend the callee is busy here.
+      this.write(`call ${String(callId).slice(0, 8)} refused: ${error}`);
+    });
     await this.listen('hasActiveCall', () => undefined);
+    await this.listen('callStateChanged', ({ callId, state }) => {
+      if (state === 'active' || state === 'dialing' || state === 'ringing') {
+        this.upsert(callId, { status: state });
+      }
+    });
+
+    // What happened before the app was up (e.g. answered from the lock screen).
+    const { events } = await CallKit.getInitialEvents();
+    if (events.length) {
+      this.write(`initial events: ${events.map((e) => `${e.name}${e.restored ? ' (restored)' : ''}`).join(', ')}`);
+      await CallKit.clearInitialEvents();
+    }
 
     // Normal (non-call) FCM messages still reach @capacitor/push-notifications:
     // ionic-callkit forwards everything that isn't a call to it.
@@ -146,7 +182,7 @@ export class CallService {
 
   /** Rings through the native UI without a push — lock the phone during the delay to test the lock screen. */
   async simulateIncoming(delayMs = 0): Promise<void> {
-    const callId = crypto.randomUUID();
+    const callId = uuid();
     this.write(`incoming call ${callId.slice(0, 8)} in ${delayMs / 1000}s`);
     setTimeout(() => {
       void this.run('displayIncomingCall', () =>
@@ -162,7 +198,7 @@ export class CallService {
 
   /** Places an outgoing call; the "remote" answers after 3 s. */
   async startOutgoing(): Promise<void> {
-    const callId = crypto.randomUUID();
+    const callId = uuid();
     await this.run('startCall', () => CallKit.startCall({ callId, calleeName: 'Bob', handle: 'bob@example.com' }));
     setTimeout(() => {
       if (this.calls()[callId]?.status === 'dialing') {
@@ -197,6 +233,11 @@ export class CallService {
     return this.run('setOnHold', () => CallKit.setOnHold({ callId: call.callId, hold: !call.held }));
   }
 
+  async setOneCallAtATime(on: boolean): Promise<void> {
+    await this.run('setCanMakeMultipleCalls', () => CallKit.setCanMakeMultipleCalls({ allow: !on }));
+    this.oneCallAtATime.set(on);
+  }
+
   clearLog(): void {
     this.log.set([]);
   }
@@ -228,7 +269,9 @@ export class CallService {
       this.stopMedia(callId);
     }
     this.upsert(callId, { status: 'ended' });
-    if (this.router.url.startsWith(`/call/${callId}`)) {
+    // On a cold start the end can arrive while we are still navigating to the call page.
+    const target = this.router.getCurrentNavigation()?.finalUrl?.toString() ?? this.router.url;
+    if (target.startsWith(`/call/${callId}`) || this.router.url.startsWith(`/call/${callId}`)) {
       void this.router.navigateByUrl('/home', { replaceUrl: true });
     }
   }

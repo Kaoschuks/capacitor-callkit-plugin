@@ -9,6 +9,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
+import android.view.WindowManager;
 import androidx.core.app.NotificationManagerCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -82,6 +83,7 @@ public class CallKitPlugin extends Plugin implements CallEventBus.Listener {
     protected void handleOnDestroy() {
         super.handleOnDestroy();
         CallEventBus.detach(this);
+        CallConnectionService.setUnreachable();
         Activity activity = getActivity();
         if (activity != null && activity.isFinishing() && !activity.isChangingConfigurations()) {
             module.setCurrentActivity(null);
@@ -89,8 +91,23 @@ public class CallKitPlugin extends Plugin implements CallEventBus.Listener {
         }
     }
 
+    /**
+     * A `callAnswered` listener means the app can take over an answered call, so it counts
+     * as setReachable() for the answer watchdog — apps that forget setReachable() don't
+     * get their calls ended.
+     */
     @Override
-    public void onCallEvent(String eventName, JSObject data) {
+    @PluginMethod(returnType = PluginMethod.RETURN_NONE)
+    public void addListener(PluginCall call) {
+        super.addListener(call);
+        if ("callAnswered".equals(call.getString("eventName"))) {
+            CallConnectionService.setReachable();
+        }
+    }
+
+    @Override
+    public boolean onCallEvent(String eventName, JSObject data) {
+        boolean jsListening = hasListeners(eventName);
         if ("callEnded".equals(eventName) || "callRejected".equals(eventName)) {
             if (CallConnectionService.currentConnections.isEmpty()) {
                 setShowOverLockScreen(false);
@@ -98,6 +115,7 @@ public class CallKitPlugin extends Plugin implements CallEventBus.Listener {
         }
         // Retain until a JS listener is added, so events from a cold start aren't lost.
         notifyListeners(eventName, data, true);
+        return jsListening;
     }
 
     /** Notification taps (full-screen intent / Answer) launch the app with these extras. */
@@ -132,6 +150,14 @@ public class CallKitPlugin extends Plugin implements CallEventBus.Listener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 activity.setShowWhenLocked(show);
                 activity.setTurnScreenOn(show);
+            } else {
+                // Android 8.0 has no setShowWhenLocked / setTurnScreenOn.
+                int flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON;
+                if (show) {
+                    activity.getWindow().addFlags(flags);
+                } else {
+                    activity.getWindow().clearFlags(flags);
+                }
             }
         });
     }
@@ -346,6 +372,39 @@ public class CallKitPlugin extends Plugin implements CallEventBus.Listener {
     @PluginMethod
     public void setReachable(PluginCall call) {
         run(call, () -> module.setReachable());
+    }
+
+    @PluginMethod
+    public void setCallState(PluginCall call) {
+        String callId = required(call, "callId");
+        String state = required(call, "state");
+        if (callId == null || state == null) {
+            return;
+        }
+        run(call, () -> module.setCallState(callId, state));
+    }
+
+    @PluginMethod
+    public void setCanMakeMultipleCalls(PluginCall call) {
+        boolean allow = Boolean.TRUE.equals(call.getBoolean("allow", true));
+        run(call, () -> module.setCanMakeMultipleCalls(allow));
+    }
+
+    @PluginMethod
+    public void getInitialEvents(PluginCall call) {
+        JSArray events = new JSArray();
+        for (CallEventBus.Event event : CallEventBus.getInitialEvents()) {
+            events.put(event.toJSObject());
+        }
+        JSObject ret = new JSObject();
+        ret.put("events", events);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void clearInitialEvents(PluginCall call) {
+        CallEventBus.clearInitialEvents();
+        call.resolve();
     }
 
     @PluginMethod

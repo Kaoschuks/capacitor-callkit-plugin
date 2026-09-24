@@ -28,6 +28,7 @@ import static io.kreador.callkit.Constants.ACTION_MUTE_CALL;
 import static io.kreador.callkit.Constants.ACTION_ON_SILENCE_INCOMING_CALL;
 import static io.kreador.callkit.Constants.ACTION_REJECT_CALL;
 import static io.kreador.callkit.Constants.ACTION_SHOW_INCOMING_CALL_UI;
+import static io.kreador.callkit.Constants.ACTION_STATE_CHANGED;
 import static io.kreador.callkit.Constants.ACTION_UNHOLD_CALL;
 import static io.kreador.callkit.Constants.ACTION_UNMUTE_CALL;
 import static io.kreador.callkit.Constants.EXTRA_CALLER_NAME;
@@ -233,6 +234,9 @@ public class CallConnection extends Connection {
         super.onStateChanged(state);
 
         Log.d(TAG, "[CallConnection] onStateChanged called, state : " + state);
+        // Callkeep only logs this; report it to JS as `callStateChanged`.
+        handle.put("state", CallConnectionService.stateToString(state));
+        sendCallRequestToActivity(ACTION_STATE_CHANGED, handle);
     }
 
     @Override
@@ -265,6 +269,9 @@ public class CallConnection extends Connection {
 
         IncomingCallNotification.cancel(context, getCallUuid());
         CallForegroundService.start(context, getCallUuid(), handle.get(EXTRA_CALLER_NAME));
+        // If the Ionic app never comes up to handle the answered call, end it instead of
+        // leaving the user in a silent "active" call.
+        CallConnectionService.startReachabilityWatchdog(context, getCallUuid());
 
         sendCallRequestToActivity(ACTION_ANSWER_CALL, handle);
         sendCallRequestToActivity(ACTION_AUDIO_SESSION, handle);

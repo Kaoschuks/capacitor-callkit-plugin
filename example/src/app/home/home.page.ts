@@ -11,6 +11,13 @@ import { CallService } from '../call.service';
 export class HomePage {
   readonly calls = inject(CallService);
 
+  async copyCommand(): Promise<void> {
+    const command = this.calls.pushCommand();
+    if (command) {
+      await navigator.clipboard?.writeText(command);
+    }
+  }
+
   async copyToken(): Promise<void> {
     const token = this.calls.token();
     if (token) {

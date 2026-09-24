@@ -22,6 +22,7 @@ public class Constants {
     public static final String ACTION_ON_SILENCE_INCOMING_CALL = "io.kreador.callkit.ACTION_ON_SILENCE_INCOMING_CALL";
     public static final String ACTION_ON_CREATE_CONNECTION_FAILED = "io.kreador.callkit.ACTION_ON_CREATE_CONNECTION_FAILED";
     public static final String ACTION_DID_CHANGE_AUDIO_ROUTE = "io.kreador.callkit.ACTION_DID_CHANGE_AUDIO_ROUTE";
+    public static final String ACTION_STATE_CHANGED = "io.kreador.callkit.ACTION_STATE_CHANGED";
 
     // Notification actions (CallActionReceiver / launch intent)
     public static final String ACTION_NOTIFICATION_DECLINE = "io.kreador.callkit.ACTION_NOTIFICATION_DECLINE";

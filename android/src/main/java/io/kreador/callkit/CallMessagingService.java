@@ -69,6 +69,9 @@ public class CallMessagingService extends FirebaseMessagingService {
 
             module.ensurePhoneAccount();
             module.reportNewIncomingCall(push.callId, push.handle, push.callerName, push.hasVideo, new JSONObject(data));
+        } catch (CallKeepModule.CallKeepException e) {
+            // Duplicate / late / busy pushes end up here by design.
+            Log.d(TAG, "[CallMessagingService] call push not shown: " + e.getMessage());
         } catch (Exception e) {
             Log.w(TAG, "[CallMessagingService] failed to handle call push: " + e.getMessage());
         }

@@ -31,6 +31,7 @@ import static io.kreador.callkit.Constants.ACTION_ON_CREATE_CONNECTION_FAILED;
 import static io.kreador.callkit.Constants.ACTION_ON_SILENCE_INCOMING_CALL;
 import static io.kreador.callkit.Constants.ACTION_REJECT_CALL;
 import static io.kreador.callkit.Constants.ACTION_SHOW_INCOMING_CALL_UI;
+import static io.kreador.callkit.Constants.ACTION_STATE_CHANGED;
 import static io.kreador.callkit.Constants.ACTION_UNHOLD_CALL;
 import static io.kreador.callkit.Constants.ACTION_UNMUTE_CALL;
 import static io.kreador.callkit.Constants.EXTRA_CALLER_NAME;
@@ -117,11 +118,27 @@ public class CallKeepModule {
     private boolean isReceiverRegistered = false;
     private VoiceBroadcastReceiver voiceBroadcastReceiver;
     private boolean hasActiveCall = false;
+    private final RecentCallIds recentlyEnded = new RecentCallIds();
 
     public static synchronized CallKeepModule getInstance(Context context) {
         if (instance == null) {
             Log.d(TAG, "[CallKeepModule] getInstance");
             instance = new CallKeepModule(context.getApplicationContext());
+            final SharedPreferences prefs = instance.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            CallEventBus.setStore(
+                new CallEventBus.Store() {
+                    @Override
+                    public String read() {
+                        return prefs.getString("pendingEvents", null);
+                    }
+
+                    @Override
+                    public void write(String json) {
+                        // commit(): the process may be killed right after an event is queued.
+                        prefs.edit().putString("pendingEvents", json).commit();
+                    }
+                }
+            );
             fetchStoredSettings(context);
             instance.registerReceiver();
             instance.initializeTelecomManager();
@@ -266,8 +283,27 @@ public class CallKeepModule {
     }
 
     public void displayIncomingCall(String uuid, String number, String callerName, boolean hasVideo, @Nullable JSONObject payload) {
+        if (CallConnectionService.getConnection(uuid) != null) {
+            // Duplicate push (FCM can deliver twice): one Telecom call per call id.
+            throw new CallKeepException("displayIncomingCall ignored: call " + uuid + " already exists");
+        }
+        if (recentlyEnded.recentlyEnded(uuid)) {
+            // A late push for a call that already ended (e.g. call_ended arrived first).
+            throw new CallKeepException("displayIncomingCall ignored: call " + uuid + " already ended");
+        }
         if (!hasPhoneAccount()) {
             throw new CallKeepException("displayIncomingCall ignored: phone account not registered or not enabled");
+        }
+        if (isBusy()) {
+            // Callkeep only applies canMakeMultipleCalls to outgoing calls. Refuse a second
+            // incoming call too, and tell JS so the app can answer "busy" to the caller.
+            JSObject args = new JSObject();
+            args.put("callId", uuid);
+            args.put("handle", number);
+            args.put("callerName", callerName);
+            args.put("error", "busy");
+            sendEventToJS("incomingCallFailed", args);
+            throw new CallKeepException("displayIncomingCall ignored: busy (canMakeMultipleCalls is false and a call is in progress)");
         }
 
         Log.d(
@@ -322,6 +358,9 @@ public class CallKeepModule {
         }
         if (number == null) {
             throw new CallKeepException("startCall ignored: no handle");
+        }
+        if (isBusy()) {
+            throw new CallKeepException("startCall ignored: busy (canMakeMultipleCalls is false and a call is in progress)");
         }
 
         Bundle extras = new Bundle();
@@ -400,6 +439,7 @@ public class CallKeepModule {
      * told via `callEnded` with the reason.
      */
     public void reportRemoteEnded(String uuid) {
+        recentlyEnded.markEnded(uuid);
         CallConnection conn = (CallConnection) CallConnectionService.getConnection(uuid);
         if (conn == null) {
             IncomingCallNotification.cancel(context, uuid);
@@ -437,8 +477,46 @@ public class CallKeepModule {
         });
     }
 
-    public void setConnectionState(String uuid, int state) {
-        CallConnectionService.setState(uuid, state);
+    /** Callkeep's setConnectionState, with the state as a string: dialing | ringing | active | held | initializing. */
+    public void setCallState(String uuid, String state) {
+        final int value;
+        switch (state) {
+            case "dialing":
+                value = Connection.STATE_DIALING;
+                break;
+            case "ringing":
+                value = Connection.STATE_RINGING;
+                break;
+            case "active":
+                value = Connection.STATE_ACTIVE;
+                break;
+            case "held":
+                value = Connection.STATE_HOLDING;
+                break;
+            case "initializing":
+                value = Connection.STATE_INITIALIZING;
+                break;
+            default:
+                throw new CallKeepException("setCallState: unknown state '" + state + "'");
+        }
+        requireConnection(uuid, "setCallState");
+        mainHandler.post(() -> CallConnectionService.setState(uuid, value));
+    }
+
+    public void setCanMakeMultipleCalls(boolean allow) {
+        CallConnectionService.setCanMakeMultipleCalls(allow);
+        // Persist so a push handled while the app is killed respects it too.
+        try {
+            JSONObject settings = new JSONObject(getSettings(context).toString());
+            settings.put("canMakeMultipleCalls", allow);
+            setSettings(settings);
+        } catch (JSONException e) {
+            Log.w(TAG, "[CallKeepModule] setCanMakeMultipleCalls: " + e);
+        }
+    }
+
+    private boolean isBusy() {
+        return !getSettings(context).optBoolean("canMakeMultipleCalls", true) && !CallConnectionService.currentConnections.isEmpty();
     }
 
     public void setMutedCall(String uuid, boolean shouldMute) {
@@ -578,6 +656,7 @@ public class CallKeepModule {
             call.put("callId", entry.getKey());
             call.put("callerName", attrs.get(EXTRA_CALLER_NAME));
             call.put("handle", attrs.get(EXTRA_CALL_NUMBER));
+            call.put("state", CallConnectionService.stateToString(entry.getValue().getState()));
             calls.put(call);
         }
         return calls;
@@ -697,6 +776,11 @@ public class CallKeepModule {
             }
         }
         return true;
+    }
+
+    /** Called whenever a connection goes away, so late pushes for it are ignored. */
+    public void markEnded(String uuid) {
+        recentlyEnded.markEnded(uuid);
     }
 
     public void onNewToken(String token) {
@@ -836,6 +920,7 @@ public class CallKeepModule {
             intentFilter.addAction(ACTION_ON_SILENCE_INCOMING_CALL);
             intentFilter.addAction(ACTION_ON_CREATE_CONNECTION_FAILED);
             intentFilter.addAction(ACTION_DID_CHANGE_AUDIO_ROUTE);
+            intentFilter.addAction(ACTION_STATE_CHANGED);
 
             LocalBroadcastManager.getInstance(context).registerReceiver(voiceBroadcastReceiver, intentFilter);
 
@@ -967,6 +1052,11 @@ public class CallKeepModule {
                     args.put("callId", callId);
                     args.put("callerName", attributeMap.get(EXTRA_CALLER_NAME));
                     sendEventToJS("incomingCallFailed", args);
+                    break;
+                case ACTION_STATE_CHANGED:
+                    args.put("callId", callId);
+                    args.put("state", attributeMap.get("state"));
+                    sendEventToJS("callStateChanged", args);
                     break;
                 case ACTION_DID_CHANGE_AUDIO_ROUTE:
                     String output = attributeMap.get("output");

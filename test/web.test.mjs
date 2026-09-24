@@ -31,7 +31,9 @@ test('displayIncomingCall emits incomingCall with defaults', async () => {
   assert.deepEqual(events, [
     ['incomingCall', { callId: 'abc', callerName: 'Alice', handle: 'Alice', hasVideo: false, payload: { room: 'r1' } }],
   ]);
-  assert.deepEqual((await plugin.getActiveCalls()).calls, [{ callId: 'abc', callerName: 'Alice', handle: 'Alice' }]);
+  assert.deepEqual((await plugin.getActiveCalls()).calls, [
+    { callId: 'abc', callerName: 'Alice', handle: 'Alice', state: 'ringing' },
+  ]);
 });
 
 test('answer then end emits callAnswered and callEnded and forgets the call', async () => {
@@ -94,4 +96,40 @@ test('methods on an unknown call reject', async () => {
 
 test('push token methods are unimplemented on web', async () => {
   await assert.rejects(plugin.registerVoipToken(), /not available on web/);
+});
+
+test('state changes are reported and tracked', async () => {
+  const states = [];
+  await plugin.addListener('callStateChanged', (d) => states.push(d.state));
+  await plugin.startCall({ callId: 'out', calleeName: 'Bob' });
+  await plugin.setCallState({ callId: 'out', state: 'active' });
+  await plugin.setOnHold({ callId: 'out', hold: true });
+  await plugin.setOnHold({ callId: 'out', hold: false });
+  assert.deepEqual(states, ['active', 'held', 'active']);
+  assert.equal((await plugin.getActiveCalls()).calls[0].state, 'active');
+});
+
+test('canMakeMultipleCalls=false refuses a second call as busy', async () => {
+  const failed = [];
+  await plugin.addListener('incomingCallFailed', (d) => failed.push(d));
+  await plugin.setCanMakeMultipleCalls({ allow: false });
+  await plugin.displayIncomingCall(incoming);
+  await assert.rejects(plugin.displayIncomingCall({ callId: 'second', callerName: 'Eve' }), /busy/);
+  await assert.rejects(plugin.startCall({ callId: 'out', calleeName: 'Bob' }), /busy/);
+  assert.deepEqual(failed, [{ callId: 'second', callerName: 'Eve', handle: 'Eve', error: 'busy' }]);
+
+  await plugin.setCanMakeMultipleCalls({ allow: true });
+  await plugin.displayIncomingCall({ callId: 'second', callerName: 'Eve' });
+  assert.equal((await plugin.getActiveCalls()).calls.length, 2);
+});
+
+test('initial events are empty on web', async () => {
+  assert.deepEqual(await plugin.getInitialEvents(), { events: [] });
+  await plugin.clearInitialEvents();
+});
+
+test('a duplicate call id is rejected', async () => {
+  await plugin.displayIncomingCall(incoming);
+  await assert.rejects(plugin.displayIncomingCall(incoming), /already exists/);
+  assert.equal(events.filter(([name]) => name === 'incomingCall').length, 1);
 });

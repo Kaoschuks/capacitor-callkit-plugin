@@ -16,8 +16,8 @@
     "Package.swift",
     "IonicCallkit.podspec"
   ],
-  "author": "Kaoschuks",
-  "license": "MIT",
+  "author": "Favour Chukwuemeka",
+  "license": "MIT AND ISC",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Kaoschuks/capacitor-callkit-plugin.git"
@@ -25,6 +25,7 @@
   "bugs": {
     "url": "https://github.com/Kaoschuks/capacitor-callkit-plugin/issues"
   },
+  "homepage": "https://github.com/Kaoschuks/capacitor-callkit-plugin#readme",
   "keywords": [
     "capacitor",
     "plugin",

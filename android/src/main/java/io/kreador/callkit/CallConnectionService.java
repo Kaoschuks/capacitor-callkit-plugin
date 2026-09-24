@@ -120,6 +120,70 @@ public class CallConnectionService extends ConnectionService {
         CallConnectionService.currentConnectionRequest = null;
     }
 
+    /** The WebView went away (e.g. activity destroyed): JS can no longer handle calls. */
+    public static void setUnreachable() {
+        Log.d(TAG, "[CallConnectionService] setUnreachable");
+        isReachable = false;
+    }
+
+    public static boolean isReachable() {
+        return isReachable;
+    }
+
+    public static boolean canMakeMultipleCalls() {
+        return canMakeMultipleCalls;
+    }
+
+    /**
+     * Reachability watchdog for answered calls (callkeep only has one for ringing calls,
+     * `displayCallReachabilityTimeout`). If JS hasn't signalled it is ready — setReachable()
+     * or a `callAnswered` listener — within `answerReachabilityTimeout` ms (default 10000,
+     * 0 disables), the dangling call is ended.
+     */
+    public static void startReachabilityWatchdog(Context context, final String callUUID) {
+        final long timeout = CallKeepModule.getSettings(context).optLong("answerReachabilityTimeout", 10000);
+        if (timeout <= 0 || isReachable) {
+            return;
+        }
+        new Handler(Looper.getMainLooper()).postDelayed(
+            () -> {
+                if (isReachable) {
+                    return;
+                }
+                Connection conn = CallConnectionService.getConnection(callUUID);
+                if (conn == null) {
+                    return;
+                }
+                Log.w(TAG, "[CallConnectionService] answered call not handled by the app within " + timeout + " ms, ending: " + callUUID);
+                conn.onDisconnect();
+            },
+            timeout
+        );
+    }
+
+    public static String stateToString(int state) {
+        switch (state) {
+            case Connection.STATE_INITIALIZING:
+                return "initializing";
+            case Connection.STATE_NEW:
+                return "new";
+            case Connection.STATE_RINGING:
+                return "ringing";
+            case Connection.STATE_DIALING:
+                return "dialing";
+            case Connection.STATE_ACTIVE:
+                return "active";
+            case Connection.STATE_HOLDING:
+                return "held";
+            case Connection.STATE_DISCONNECTED:
+                return "disconnected";
+            case Connection.STATE_PULLING_CALL:
+                return "pulling";
+            default:
+                return "unknown";
+        }
+    }
+
     public static void setInitialized(boolean value) {
         Log.d(TAG, "[CallConnectionService] setInitialized: " + (value ? "true" : "false"));
 
@@ -132,6 +196,7 @@ public class CallConnectionService extends ConnectionService {
 
         if (connectionId != null) {
             currentConnections.remove(connectionId);
+            CallKeepModule.getInstance(context).markEnded(connectionId);
         }
 
         if (currentConnections.isEmpty()) {
@@ -139,11 +204,12 @@ public class CallConnectionService extends ConnectionService {
         }
     }
 
-    public static void setState(String uuid, int state) {
+    /** @return false when there is no connection for uuid. */
+    public static boolean setState(String uuid, int state) {
         Connection conn = CallConnectionService.getConnection(uuid);
         if (conn == null) {
             Log.w(TAG, "[CallConnectionService] setState ignored because no connection found, uuid: " + uuid);
-            return;
+            return false;
         }
 
         switch (state) {
@@ -163,6 +229,7 @@ public class CallConnectionService extends ConnectionService {
                 conn.setRinging();
                 break;
         }
+        return true;
     }
 
     @Override
@@ -195,8 +262,10 @@ public class CallConnectionService extends ConnectionService {
         if (incomingCallConnection == null) {
             return Connection.createFailedConnection(new DisconnectCause(DisconnectCause.ERROR));
         }
-        incomingCallConnection.setRinging();
+        // Callkeep calls setRinging() then setInitialized(), which leaves the connection in
+        // STATE_NEW. Initialize first so the reported state is really "ringing".
         incomingCallConnection.setInitialized();
+        incomingCallConnection.setRinging();
 
         if (timeout != null) {
             this.checkForAppReachability(callUUID, timeout);
@@ -262,18 +331,19 @@ public class CallConnectionService extends ConnectionService {
         if (outgoingCallConnection == null) {
             return Connection.createFailedConnection(new DisconnectCause(DisconnectCause.ERROR));
         }
+
+        // ‍️Weirdly on some Samsung phones (A50, S9...) using `setInitialized` will not display the native UI ...
+        // when making a call from the native Phone application. The call will still be displayed correctly without it.
+        // Callkeep calls it after setDialing(), which leaves the connection in STATE_NEW; call it first.
+        if (!Build.MANUFACTURER.equalsIgnoreCase("Samsung")) {
+            Log.d(TAG, "[CallConnectionService] onCreateOutgoingConnection: initializing connection on non-Samsung device");
+            outgoingCallConnection.setInitialized();
+        }
         outgoingCallConnection.setDialing();
         outgoingCallConnection.setAudioModeIsVoip(true);
         outgoingCallConnection.setCallerDisplayName(displayName, TelecomManager.PRESENTATION_ALLOWED);
 
         CallForegroundService.start(this, uuid, displayName);
-
-        // ‍️Weirdly on some Samsung phones (A50, S9...) using `setInitialized` will not display the native UI ...
-        // when making a call from the native Phone application. The call will still be displayed correctly without it.
-        if (!Build.MANUFACTURER.equalsIgnoreCase("Samsung")) {
-            Log.d(TAG, "[CallConnectionService] onCreateOutgoingConnection: initializing connection on non-Samsung device");
-            outgoingCallConnection.setInitialized();
-        }
 
         HashMap<String, String> extrasMap = this.bundleToMap(extras);
 

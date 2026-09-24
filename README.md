@@ -10,7 +10,7 @@ Native incoming / outgoing call UI for Ionic & Capacitor 7 apps.
 
 The plugin shows and tracks the call. **Media is yours:** start your WebRTC / SIP session on `callAnswered` / `callStarted` and stop it on `callEnded`.
 
-> **Status:** Android and web implement the API below. The iOS side is being migrated to the same API (see [WORK.md](WORK.md)); until then iOS still exposes the previous `plugin_events` listener and reads the legacy `ConnectionId` / `Username` push keys.
+> **Status:** Android, iOS and web implement the API below. Android is verified on an emulator; the iOS implementation (ported from callkeep's `RNCallKeep.m`) still needs its first build and device test — see [WORK.md](WORK.md). The previous iOS `plugin_events` listener is gone; the legacy `ConnectionId` / `Username` push keys are still accepted.
 
 ## Install
 
@@ -73,6 +73,15 @@ await CallKit.displayIncomingCall({ callId, callerName: 'Alice' });
    openssl pkcs12 -in YOUR_CERTIFICATES.p12 -out app.pem -nodes -clcerts
    ```
 
+### iOS notes
+
+- **Every VoIP push must show a call.** iOS 13+ terminates apps that receive a VoIP push without reporting a call to CallKit. The plugin reports calls synchronously from the push. For pushes it can't show (not a call payload, `call_ended` for an unknown call, busy) it reports and immediately ends a call, which can appear briefly or as a missed call. Prefer sending `call_ended` over your signalling or a regular (non-VoIP) push when the app is running.
+- **Answering from the lock screen does not open the app.** CallKit keeps the call in the system UI; your app is running in the background, so start media on `callAnswered` without relying on the WebView being visible.
+- **Call ids:** CallKit needs UUIDs. Use UUIDs as `callId` if you can; other strings work too and are mapped internally.
+- **Early PushKit registration (recommended):** call `CallKitVoip.start()` in `application(_:didFinishLaunchingWithOptions:)` (`import IonicCallkit` with CocoaPods, `import CallKitPlugin` with SPM). The plugin also registers when it loads, but registering at launch means a VoIP push that starts the app doesn't wait for the WebView.
+- **Audio:** `ios.audioSession.autoConfigure: false` lets your media SDK own `AVAudioSession`; otherwise the plugin configures play-and-record with Bluetooth when CallKit activates the session.
+- **Not available on iOS:** `backToForeground`, `openPhoneAccountSettings`, `openFullScreenIntentSettings` (reject as unimplemented); `setAvailable`, `setReachable` are no-ops; `showIncomingCallUi` / `silenceIncomingCall` / `checkReachability` / `hasActiveCall` are Android-only events.
+
 ## Usage
 
 ```typescript
@@ -109,6 +118,14 @@ await CallKit.reportEndCall({ callId, reason: CallEndReason.RemoteEnded });
 
 A complete Ionic Angular demo lives in [`example/`](example/).
 
+### Cold starts, reachability and concurrency (Android)
+
+- **Cold start:** when a push wakes a killed app, events raised before your listeners exist (`incomingCall`, `callAnswered` from the lock screen, …) are queued natively, persisted, and delivered as soon as you add listeners. `getInitialEvents()` also returns them (oldest first) so you can route straight to the call screen at startup; call `clearInitialEvents()` once handled. Events marked `restored: true` come from a previous process that died before delivering them — Android has already dropped those calls.
+- **Reachability watchdog:** if a call is answered but your app never comes up to handle it, the plugin ends it after `android.answerReachabilityTimeout` ms (default 10000, `0` disables). Adding a `callAnswered` listener or calling `setReachable()` marks the app as ready.
+- **Call state:** `setCallState({ callId, state })` reports `dialing` / `ringing` / `active` / `held` to the system; every change is emitted as `callStateChanged`.
+- **One call at a time:** `setCanMakeMultipleCalls({ allow: false })` (or `android.canMakeMultipleCalls: false`) refuses a second incoming call with `incomingCallFailed { error: 'busy' }` and makes `startCall` reject — tell the caller "busy" from that event.
+
+
 ## Backend contract
 
 The plugin only produces tokens; your server sends the pushes. Never ship APNs / FCM credentials in the app.
@@ -124,6 +141,8 @@ Both platforms read the same keys:
 | `hasVideo` | no | `"true"` / `"false"` |
 
 The legacy keys `ConnectionId` / `Username` are still accepted.
+
+Use a **new `callId` per call** (a UUID is ideal — iOS uses it directly). Pushes are de-duplicated per call id, and a push for a call id that ended in the last 5 minutes is ignored, so retries and a `call_ended` that overtakes its `incoming_call` never ring a finished call.
 
 **iOS — APNs VoIP push** (`https://api.push.apple.com/3/device/<token>`, headers `apns-topic: <bundle>.voip`, `apns-push-type: voip`, `apns-priority: 10`):
 
@@ -180,6 +199,7 @@ The Android implementation is a port of [livekit/react-native-callkeep](https://
 * [`rejectCall(...)`](#rejectcall)
 * [`startCall(...)`](#startcall)
 * [`setCallActive(...)`](#setcallactive)
+* [`setCallState(...)`](#setcallstate)
 * [`endCall(...)`](#endcall)
 * [`endAllCalls()`](#endallcalls)
 * [`reportEndCall(...)`](#reportendcall)
@@ -192,6 +212,9 @@ The Android implementation is a port of [livekit/react-native-callkeep](https://
 * [`setAudioRoute(...)`](#setaudioroute)
 * [`setAvailable(...)`](#setavailable)
 * [`setReachable()`](#setreachable)
+* [`setCanMakeMultipleCalls(...)`](#setcanmakemultiplecalls)
+* [`getInitialEvents()`](#getinitialevents)
+* [`clearInitialEvents()`](#clearinitialevents)
 * [`hasPhoneAccount()`](#hasphoneaccount)
 * [`openPhoneAccountSettings()`](#openphoneaccountsettings)
 * [`canUseFullScreenIntent()`](#canusefullscreenintent)
@@ -208,6 +231,7 @@ The Android implementation is a port of [livekit/react-native-callkeep](https://
 * [`addListener('callRejected', ...)`](#addlistenercallrejected-)
 * [`addListener('muted', ...)`](#addlistenermuted-)
 * [`addListener('held', ...)`](#addlistenerheld-)
+* [`addListener('callStateChanged', ...)`](#addlistenercallstatechanged-)
 * [`addListener('dtmf', ...)`](#addlistenerdtmf-)
 * [`addListener('speakerChanged', ...)`](#addlistenerspeakerchanged-)
 * [`addListener('audioRouteChanged', ...)`](#addlisteneraudioroutechanged-)
@@ -347,6 +371,23 @@ Mark an outgoing call as connected (remote side picked up).
 --------------------
 
 
+### setCallState(...)
+
+```typescript
+setCallState(options: { callId: string; state: SettableCallState; }) => Promise<void>
+```
+
+Report the call's connection state to the system (callkeep's `setConnectionState`),
+e.g. `dialing` while your signalling connects, `active` once media flows.
+Emits `callStateChanged`.
+
+| Param         | Type                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| **`options`** | <code>{ callId: string; state: <a href="#settablecallstate">SettableCallState</a>; }</code> |
+
+--------------------
+
+
 ### endCall(...)
 
 ```typescript
@@ -471,7 +512,7 @@ Play DTMF digits on a call. Emits `dtmf`.
 getAudioRoutes() => Promise<{ routes: AudioRoute[]; }>
 ```
 
-List available audio outputs. Android only.
+List available audio routes. Android and iOS.
 
 **Returns:** <code>Promise&lt;{ routes: AudioRoute[]; }&gt;</code>
 
@@ -484,7 +525,7 @@ List available audio outputs. Android only.
 setAudioRoute(options: { callId: string; route: AudioRouteType; }) => Promise<void>
 ```
 
-Select an audio output. Android only.
+Select an audio route. Android and iOS.
 
 | Param         | Type                                                                                  |
 | ------------- | ------------------------------------------------------------------------------------- |
@@ -517,6 +558,53 @@ setReachable() => Promise<void>
 ```
 
 Tell the plugin the JS layer is ready to handle calls. Android only.
+Adding a `callAnswered` listener counts as reachable too. Answered calls are ended if
+the app isn't reachable within `android.answerReachabilityTimeout`.
+
+--------------------
+
+
+### setCanMakeMultipleCalls(...)
+
+```typescript
+setCanMakeMultipleCalls(options: { allow: boolean; }) => Promise<void>
+```
+
+Allow or refuse concurrent calls. When `false`, a new incoming call while another is in
+progress is refused and `incomingCallFailed` is emitted with `error: 'busy'`, and
+`startCall` rejects. Persisted, so pushes handled while the app is killed respect it.
+
+| Param         | Type                             |
+| ------------- | -------------------------------- |
+| **`options`** | <code>{ allow: boolean; }</code> |
+
+--------------------
+
+
+### getInitialEvents()
+
+```typescript
+getInitialEvents() => Promise<{ events: InitialEvent[]; }>
+```
+
+Events that happened before JS attached (e.g. the call was answered from the lock
+screen during a cold start), oldest first. They are also delivered to listeners; use
+this to route directly at startup. Events with `restored: true` come from a previous
+app process that died before delivering them — their calls no longer exist.
+Kept until `clearInitialEvents()`. Android and iOS (empty on web).
+
+**Returns:** <code>Promise&lt;{ events: InitialEvent[]; }&gt;</code>
+
+--------------------
+
+
+### clearInitialEvents()
+
+```typescript
+clearInitialEvents() => Promise<void>
+```
+
+Forget the events returned by `getInitialEvents()`.
 
 --------------------
 
@@ -577,7 +665,8 @@ Open the settings page to grant full-screen intents (Android 14+).
 backToForeground() => Promise<void>
 ```
 
-Bring the app to the foreground (e.g. after answering from the lock screen). Android only.
+Bring the app to the foreground (e.g. after answering from the lock screen). Android only;
+rejects as unimplemented on iOS, which doesn't allow it.
 
 --------------------
 
@@ -749,6 +838,22 @@ addListener(eventName: 'held', listenerFunc: (data: HeldEvent) => void) => Promi
 --------------------
 
 
+### addListener('callStateChanged', ...)
+
+```typescript
+addListener(eventName: 'callStateChanged', listenerFunc: (data: CallStateChangedEvent) => void) => Promise<PluginListenerHandle>
+```
+
+| Param              | Type                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| **`eventName`**    | <code>'callStateChanged'</code>                                                            |
+| **`listenerFunc`** | <code>(data: <a href="#callstatechangedevent">CallStateChangedEvent</a>) =&gt; void</code> |
+
+**Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
+
+--------------------
+
+
 ### addListener('dtmf', ...)
 
 ```typescript
@@ -907,36 +1012,39 @@ removeAllListeners() => Promise<void>
 
 #### CallSetupOptions
 
-| Prop                | Type                                                                | Description                                                                    |
-| ------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **`appName`**       | <code>string</code>                                                 | Name shown in the system call UI / calling account. Defaults to the app label. |
-| **`supportsVideo`** | <code>boolean</code>                                                | Default: false                                                                 |
-| **`imageName`**     | <code>string</code>                                                 | Android drawable / iOS asset name used as the calling account / CallKit icon.  |
-| **`android`**       | <code><a href="#androidsetupoptions">AndroidSetupOptions</a></code> |                                                                                |
-| **`ios`**           | <code><a href="#iossetupoptions">IOSSetupOptions</a></code>         |                                                                                |
+| Prop                | Type                                                                | Description                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`appName`**       | <code>string</code>                                                 | Name of the calling account on Android. Defaults to the app label. iOS always shows the app's display name (CallKit no longer accepts a custom one). |
+| **`supportsVideo`** | <code>boolean</code>                                                | Default: false                                                                                                                                       |
+| **`imageName`**     | <code>string</code>                                                 | Android drawable / iOS asset name used as the calling account / CallKit icon.                                                                        |
+| **`android`**       | <code><a href="#androidsetupoptions">AndroidSetupOptions</a></code> |                                                                                                                                                      |
+| **`ios`**           | <code><a href="#iossetupoptions">IOSSetupOptions</a></code>         |                                                                                                                                                      |
 
 
 #### AndroidSetupOptions
 
-| Prop                                 | Type                                                                                                                       | Description                                                                                                                                                                                        |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`selfManaged`**                    | <code>boolean</code>                                                                                                       | Self-managed ConnectionService: the app owns the call UI and no "enable calling account" step is needed. Default: true. Set to false for managed mode (system dialer UI, needs phone permissions). |
-| **`showIncomingCallNotification`**   | <code>boolean</code>                                                                                                       | Show the plugin's native incoming-call notification (full-screen intent + Answer/Decline) in self-managed mode. Default: true.                                                                     |
-| **`notificationIcon`**               | <code>string</code>                                                                                                        | Small icon (drawable or mipmap resource name) for call notifications.                                                                                                                              |
-| **`incomingCallChannelName`**        | <code>string</code>                                                                                                        | Channel name for incoming calls. Default: "Incoming calls".                                                                                                                                        |
-| **`foregroundService`**              | <code>false \| { channelId?: string; channelName?: string; notificationTitle?: string; notificationIcon?: string; }</code> | Ongoing-call foreground service notification (keeps the mic alive in the background). Enabled by default; pass `false` to disable.                                                                 |
-| **`canMakeMultipleCalls`**           | <code>boolean</code>                                                                                                       | Allow more than one simultaneous call. Default: true.                                                                                                                                              |
-| **`displayCallReachabilityTimeout`** | <code>number</code>                                                                                                        | If set, an incoming call is dropped when the JS layer hasn't called `setReachable()` within this many milliseconds.                                                                                |
+| Prop                                 | Type                                                                                                                       | Description                                                                                                                                                                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`selfManaged`**                    | <code>boolean</code>                                                                                                       | Self-managed ConnectionService: the app owns the call UI and no "enable calling account" step is needed. Default: true. Set to false for managed mode (system dialer UI, needs phone permissions).                                     |
+| **`showIncomingCallNotification`**   | <code>boolean</code>                                                                                                       | Show the plugin's native incoming-call notification (full-screen intent + Answer/Decline) in self-managed mode. Default: true.                                                                                                         |
+| **`notificationIcon`**               | <code>string</code>                                                                                                        | Small icon (drawable or mipmap resource name) for call notifications.                                                                                                                                                                  |
+| **`incomingCallChannelName`**        | <code>string</code>                                                                                                        | Channel name for incoming calls. Default: "Incoming calls".                                                                                                                                                                            |
+| **`foregroundService`**              | <code>false \| { channelId?: string; channelName?: string; notificationTitle?: string; notificationIcon?: string; }</code> | Ongoing-call foreground service notification (keeps the mic alive in the background). Enabled by default; pass `false` to disable.                                                                                                     |
+| **`canMakeMultipleCalls`**           | <code>boolean</code>                                                                                                       | Allow more than one simultaneous call. Default: true. See `setCanMakeMultipleCalls`.                                                                                                                                                   |
+| **`answerReachabilityTimeout`**      | <code>number</code>                                                                                                        | End an answered call if the app hasn't called `setReachable()` (or added a `callAnswered` listener) within this many milliseconds — e.g. the WebView failed to start after answering from the lock screen. Default: 10000. 0 disables. |
+| **`displayCallReachabilityTimeout`** | <code>number</code>                                                                                                        | If set, an incoming call is dropped when the JS layer hasn't called `setReachable()` within this many milliseconds.                                                                                                                    |
 
 
 #### IOSSetupOptions
 
-| Prop                           | Type                 | Description                            |
-| ------------------------------ | -------------------- | -------------------------------------- |
-| **`ringtoneSound`**            | <code>string</code>  | Ringtone sound file in the app bundle. |
-| **`maximumCallGroups`**        | <code>number</code>  | Default: 1                             |
-| **`maximumCallsPerCallGroup`** | <code>number</code>  | Default: 1                             |
-| **`includesCallsInRecents`**   | <code>boolean</code> | Default: false                         |
+| Prop                           | Type                                                                               | Description                                                                                                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ringtoneSound`**            | <code>string</code>                                                                | Ringtone sound file in the app bundle.                                                                                                                           |
+| **`maximumCallGroups`**        | <code>number</code>                                                                | Default: 1                                                                                                                                                       |
+| **`maximumCallsPerCallGroup`** | <code>number</code>                                                                | Default: 1                                                                                                                                                       |
+| **`includesCallsInRecents`**   | <code>boolean</code>                                                               | Default: false                                                                                                                                                   |
+| **`handleType`**               | <code>'number' \| 'generic' \| 'email'</code>                                      | CallKit handle type for `handle` values. Default: `generic`.                                                                                                     |
+| **`audioSession`**             | <code>{ autoConfigure?: boolean; categoryOptions?: number; mode?: string; }</code> | Audio session CallKit activates for the call (callkeep's `audioSession` setting). Set `autoConfigure: false` if your media SDK configures AVAudioSession itself. |
 
 
 #### IncomingCallOptions
@@ -993,13 +1101,24 @@ removeAllListeners() => Promise<void>
 | **`selected`** | <code>boolean</code>                                      |
 
 
+#### InitialEvent
+
+| Prop            | Type                                                             | Description                                                                   |
+| --------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **`name`**      | <code>string</code>                                              | Event name, e.g. `incomingCall`, `callAnswered`.                              |
+| **`data`**      | <code><a href="#record">Record</a>&lt;string, unknown&gt;</code> |                                                                               |
+| **`timestamp`** | <code>number</code>                                              | Epoch milliseconds.                                                           |
+| **`restored`**  | <code>boolean</code>                                             | From a previous app process that died before delivering it; the call is gone. |
+
+
 #### ActiveCall
 
-| Prop             | Type                |
-| ---------------- | ------------------- |
-| **`callId`**     | <code>string</code> |
-| **`callerName`** | <code>string</code> |
-| **`handle`**     | <code>string</code> |
+| Prop             | Type                                            |
+| ---------------- | ----------------------------------------------- |
+| **`callId`**     | <code>string</code>                             |
+| **`callerName`** | <code>string</code>                             |
+| **`handle`**     | <code>string</code>                             |
+| **`state`**      | <code><a href="#callstate">CallState</a></code> |
 
 
 #### CallKitPermissionStatus
@@ -1071,6 +1190,13 @@ removeAllListeners() => Promise<void>
 | **`hold`** | <code>boolean</code> |
 
 
+#### CallStateChangedEvent
+
+| Prop        | Type                                            |
+| ----------- | ----------------------------------------------- |
+| **`state`** | <code><a href="#callstate">CallState</a></code> |
+
+
 #### DtmfEvent
 
 | Prop         | Type                |
@@ -1113,9 +1239,23 @@ Construct a type with a set of properties K of type T
 <code>{ [P in K]: T; }</code>
 
 
+#### SettableCallState
+
+States an app may set with `setCallState`.
+
+<code>'initializing' | 'ringing' | 'dialing' | 'active' | 'held'</code>
+
+
 #### AudioRouteType
 
 <code>'Phone' | 'Speaker' | 'Headset' | 'Bluetooth'</code>
+
+
+#### CallState
+
+Connection states reported by `callStateChanged` / `getActiveCalls`.
+
+<code>'initializing' | 'new' | 'ringing' | 'dialing' | 'active' | 'held' | 'disconnected' | 'pulling'</code>
 
 
 #### PermissionState

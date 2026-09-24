@@ -8,6 +8,8 @@ import type {
   CallKitPlugin,
   CallKitPermissionType,
   IncomingCallOptions,
+  InitialEvent,
+  SettableCallState,
   OutgoingCallOptions,
   ReportEndCallOptions,
   UpdateDisplayOptions,
@@ -20,6 +22,7 @@ import type {
  */
 export class CallKitWeb extends WebPlugin implements CallKitPlugin {
   private calls = new Map<string, ActiveCall>();
+  private allowMultipleCalls = true;
 
   async setup(): Promise<void> {
     // Nothing to configure on web.
@@ -36,7 +39,14 @@ export class CallKitWeb extends WebPlugin implements CallKitPlugin {
   async displayIncomingCall(options: IncomingCallOptions): Promise<void> {
     const { callId, callerName } = options;
     const handle = options.handle ?? callerName;
-    this.calls.set(callId, { callId, callerName, handle });
+    if (this.calls.has(callId)) {
+      throw new Error(`displayIncomingCall ignored: call ${callId} already exists`);
+    }
+    if (!this.allowMultipleCalls && this.calls.size > 0) {
+      this.notifyListeners('incomingCallFailed', { callId, callerName, handle, error: 'busy' });
+      throw new Error('displayIncomingCall ignored: busy (canMakeMultipleCalls is false and a call is in progress)');
+    }
+    this.calls.set(callId, { callId, callerName, handle, state: 'ringing' });
     this.notifyListeners('incomingCall', {
       callId,
       callerName,
@@ -49,6 +59,7 @@ export class CallKitWeb extends WebPlugin implements CallKitPlugin {
   async answerCall(options: CallIdOptions): Promise<void> {
     this.requireCall(options.callId, 'answerCall');
     this.notifyListeners('callAnswered', { callId: options.callId, hasVideo: false });
+    this.updateState(options.callId, 'active');
   }
 
   async rejectCall(options: CallIdOptions): Promise<void> {
@@ -60,12 +71,33 @@ export class CallKitWeb extends WebPlugin implements CallKitPlugin {
   async startCall(options: OutgoingCallOptions): Promise<void> {
     const { callId, calleeName } = options;
     const handle = options.handle ?? calleeName;
-    this.calls.set(callId, { callId, callerName: calleeName, handle });
+    if (!this.allowMultipleCalls && this.calls.size > 0) {
+      throw new Error('startCall ignored: busy (canMakeMultipleCalls is false and a call is in progress)');
+    }
+    this.calls.set(callId, { callId, callerName: calleeName, handle, state: 'dialing' });
     this.notifyListeners('callStarted', { callId, calleeName, handle });
   }
 
   async setCallActive(options: CallIdOptions): Promise<void> {
     this.requireCall(options.callId, 'setCallActive');
+    this.updateState(options.callId, 'active');
+  }
+
+  async setCallState(options: { callId: string; state: SettableCallState }): Promise<void> {
+    this.requireCall(options.callId, 'setCallState');
+    this.updateState(options.callId, options.state);
+  }
+
+  async setCanMakeMultipleCalls(options: { allow: boolean }): Promise<void> {
+    this.allowMultipleCalls = options.allow;
+  }
+
+  async getInitialEvents(): Promise<{ events: InitialEvent[] }> {
+    return { events: [] };
+  }
+
+  async clearInitialEvents(): Promise<void> {
+    // Nothing is queued on web.
   }
 
   async endCall(options: CallIdOptions): Promise<void> {
@@ -104,6 +136,7 @@ export class CallKitWeb extends WebPlugin implements CallKitPlugin {
   async setOnHold(options: { callId: string; hold: boolean }): Promise<void> {
     this.requireCall(options.callId, 'setOnHold');
     this.notifyListeners('held', { callId: options.callId, hold: options.hold });
+    this.updateState(options.callId, options.hold ? 'held' : 'active');
   }
 
   async sendDTMF(options: { callId: string; digits: string }): Promise<void> {
@@ -176,6 +209,14 @@ export class CallKitWeb extends WebPlugin implements CallKitPlugin {
       await Notification.requestPermission();
     }
     return this.checkPermissions();
+  }
+
+  private updateState(callId: string, state: SettableCallState): void {
+    const call = this.calls.get(callId);
+    if (call && call.state !== state) {
+      call.state = state;
+      this.notifyListeners('callStateChanged', { callId, state });
+    }
   }
 
   private requireCall(callId: string, method: string): ActiveCall {

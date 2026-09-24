@@ -78,7 +78,17 @@ public class CallForegroundService extends Service {
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type);
         } catch (Exception e) {
-            Log.w(TAG, "[CallForegroundService] startForeground failed : " + e);
+            // Android 14+ refuses the microphone type while the app is in the background (e.g. a
+            // call answered from a Bluetooth headset). Keep the call alive with phoneCall only.
+            Log.w(TAG, "[CallForegroundService] startForeground(" + type + ") failed : " + e);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && type != ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) {
+                try {
+                    ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL);
+                    return START_NOT_STICKY;
+                } catch (Exception retry) {
+                    Log.w(TAG, "[CallForegroundService] startForeground(phoneCall) failed : " + retry);
+                }
+            }
             stopSelf();
         }
         return START_NOT_STICKY;
