@@ -1,2 +1,57 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Self-managed ConnectionService (default mode) -->
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Ongoing-call foreground service (phoneCall|microphone types required on Android 14+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Ringing notification over the lock screen -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!--
+      Managed mode (setup({ android: { selfManaged: false } })) additionally needs, in the APP manifest:
+        READ_PHONE_STATE, READ_PHONE_NUMBERS, CALL_PHONE
+      They are not declared here to keep them off self-managed apps' Play listing.
+    -->
+
+    <application>
+        <service
+            android:name="io.kreador.callkit.CallConnectionService"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="io.kreador.callkit.CallForegroundService"
+            android:foregroundServiceType="phoneCall|microphone"
+            android:exported="false" />
+
+        <!--
+          Priority makes FCM (PackageManager.resolveService) pick this service over other
+          MESSAGING_EVENT services such as @capacitor/push-notifications. Non-call messages
+          and token refreshes are forwarded to that plugin, so both keep working.
+        -->
+        <service
+            android:name="io.kreador.callkit.CallMessagingService"
+            android:exported="false">
+            <intent-filter android:priority="100">
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="io.kreador.callkit.CallActionReceiver"
+            android:exported="false" />
+    </application>
 </manifest>

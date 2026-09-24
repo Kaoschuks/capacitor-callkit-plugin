@@ -1,6 +1,6 @@
 import UIKit
 import Capacitor
-import CapacitorCallkitPlugin
+import IonicCallkit
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {

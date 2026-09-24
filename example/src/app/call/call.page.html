@@ -1,0 +1,55 @@
+<ion-header>
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/home"></ion-back-button>
+    </ion-buttons>
+    <ion-title>Call</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  @if (call(); as call) {
+    <div class="caller">
+      <ion-avatar>
+        <ion-icon name="person-circle-outline"></ion-icon>
+      </ion-avatar>
+      <h1>{{ call.name }}</h1>
+      <p>{{ call.handle }}</p>
+      <ion-badge [color]="call.status === 'active' ? 'success' : call.status === 'ended' ? 'medium' : 'warning'">
+        {{ call.status }}{{ call.held ? ' · on hold' : '' }}
+      </ion-badge>
+    </div>
+
+    @if (call.status === 'ringing' && call.direction === 'incoming') {
+      <div class="actions">
+        <ion-button shape="round" color="danger" (click)="calls.decline(call.callId)">
+          <ion-icon slot="icon-only" name="close"></ion-icon>
+        </ion-button>
+        <ion-button shape="round" color="success" (click)="calls.answer(call.callId)">
+          <ion-icon slot="icon-only" name="call"></ion-icon>
+        </ion-button>
+      </div>
+    } @else if (call.status !== 'ended') {
+      <div class="actions">
+        <ion-button shape="round" [fill]="call.muted ? 'solid' : 'outline'" (click)="calls.toggleMute(call)">
+          <ion-icon slot="icon-only" [name]="call.muted ? 'mic-off' : 'mic'"></ion-icon>
+        </ion-button>
+        <ion-button shape="round" [fill]="call.speaker ? 'solid' : 'outline'" (click)="calls.toggleSpeaker(call)">
+          <ion-icon slot="icon-only" name="volume-high"></ion-icon>
+        </ion-button>
+        <ion-button shape="round" [fill]="call.held ? 'solid' : 'outline'" (click)="calls.toggleHold(call)">
+          <ion-icon slot="icon-only" name="pause"></ion-icon>
+        </ion-button>
+      </div>
+      <div class="actions">
+        <ion-button shape="round" color="danger" (click)="calls.hangUp(call.callId)">
+          <ion-icon slot="icon-only" name="call"></ion-icon>
+        </ion-button>
+      </div>
+    } @else {
+      <p class="ion-text-center">Call ended</p>
+    }
+  } @else {
+    <p class="ion-text-center">Unknown call</p>
+  }
+</ion-content>

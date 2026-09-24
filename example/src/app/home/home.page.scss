@@ -1,0 +1,13 @@
+.token {
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.log-line {
+  --min-height: 0;
+
+  code {
+    font-size: 11px;
+  }
+}

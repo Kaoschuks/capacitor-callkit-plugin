@@ -1,0 +1,98 @@
+<ion-header [translucent]="true">
+  <ion-toolbar>
+    <ion-title>CallKit Demo</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true">
+  <ion-list inset>
+    <ion-list-header>Device</ion-list-header>
+    <ion-item>
+      <ion-label>Platform</ion-label>
+      <ion-note slot="end">{{ calls.platform }}</ion-note>
+    </ion-item>
+    <ion-item button (click)="copyToken()" [disabled]="!calls.token()">
+      <ion-label class="ion-text-wrap">
+        <h3>Push token {{ calls.platform === 'android' ? '(FCM)' : '(VoIP)' }}</h3>
+        <p class="token">{{ calls.token() ?? 'not registered' }}</p>
+      </ion-label>
+      <ion-icon slot="end" name="copy-outline"></ion-icon>
+    </ion-item>
+    <ion-item button (click)="calls.registerToken()">
+      <ion-label>Register token again</ion-label>
+    </ion-item>
+  </ion-list>
+
+  <ion-list inset>
+    <ion-list-header>Permissions</ion-list-header>
+    @if (calls.permissions(); as perms) {
+      <ion-item>
+        <ion-label>Microphone</ion-label>
+        <ion-note slot="end">{{ perms.microphone }}</ion-note>
+      </ion-item>
+      <ion-item>
+        <ion-label>Notifications</ion-label>
+        <ion-note slot="end">{{ perms.notifications }}</ion-note>
+      </ion-item>
+    }
+    @if (calls.platform === 'android') {
+      <ion-item [button]="calls.fullScreenAllowed() === false" (click)="calls.openFullScreenSettings()">
+        <ion-label>Full-screen intent</ion-label>
+        <ion-note slot="end">{{ calls.fullScreenAllowed() ? 'allowed' : 'not allowed' }}</ion-note>
+      </ion-item>
+    }
+    <ion-item button (click)="calls.requestPermissions()">
+      <ion-label color="primary">Request permissions</ion-label>
+    </ion-item>
+    <ion-item button (click)="calls.refreshPermissions()">
+      <ion-label>Refresh</ion-label>
+    </ion-item>
+  </ion-list>
+
+  <ion-list inset>
+    <ion-list-header>Test calls</ion-list-header>
+    <ion-item button (click)="calls.simulateIncoming()">
+      <ion-icon slot="start" name="call-outline"></ion-icon>
+      <ion-label>Incoming call now</ion-label>
+    </ion-item>
+    <ion-item button (click)="calls.simulateIncoming(8000)">
+      <ion-icon slot="start" name="lock-closed-outline"></ion-icon>
+      <ion-label class="ion-text-wrap">
+        <h3>Incoming call in 8 s</h3>
+        <p>Lock the phone to test the lock-screen UI</p>
+      </ion-label>
+    </ion-item>
+    <ion-item button (click)="calls.startOutgoing()">
+      <ion-icon slot="start" name="arrow-up-circle-outline"></ion-icon>
+      <ion-label>Outgoing call</ion-label>
+    </ion-item>
+  </ion-list>
+
+  @if (calls.activeCalls().length) {
+    <ion-list inset>
+      <ion-list-header>Active calls</ion-list-header>
+      @for (call of calls.activeCalls(); track call.callId) {
+        <ion-item [routerLink]="['/call', call.callId]" detail>
+          <ion-label>
+            <h3>{{ call.name }}</h3>
+            <p>{{ call.direction }} · {{ call.status }}</p>
+          </ion-label>
+        </ion-item>
+      }
+    </ion-list>
+  }
+
+  <ion-list inset>
+    <ion-list-header>
+      <ion-label>Event log</ion-label>
+      <ion-button (click)="calls.clearLog()">Clear</ion-button>
+    </ion-list-header>
+    @for (line of calls.log(); track $index) {
+      <ion-item lines="none" class="log-line">
+        <ion-label class="ion-text-wrap"><code>{{ line }}</code></ion-label>
+      </ion-item>
+    } @empty {
+      <ion-item lines="none"><ion-label color="medium">No events yet</ion-label></ion-item>
+    }
+  </ion-list>
+</ion-content>

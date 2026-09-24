@@ -4,7 +4,7 @@ export default {
     {
       file: 'dist/plugin.js',
       format: 'iife',
-      name: 'capacitorCallKit',
+      name: 'capacitorIonicCallkit',
       globals: {
         '@capacitor/core': 'capacitorExports',
       },

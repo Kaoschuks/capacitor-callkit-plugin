@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "CapacitorCallkitPlugin",
-    platforms: [.iOS(.v13)],
+    name: "IonicCallkit",
+    platforms: [.iOS(.v14)],
     products: [
         .library(
-            name: "CapacitorCallkitPlugin",
+            name: "IonicCallkit",
             targets: ["CallKitPlugin"])
     ],
     dependencies: [
-        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", branch: "main")
+        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "7.0.0")
     ],
     targets: [
         .target(
