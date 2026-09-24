@@ -1,6 +1,6 @@
 {
   "name": "ionic-callkit",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "description": "Native call UI for Ionic/Capacitor: CallKit + PushKit on iOS, ConnectionService + FCM on Android",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
