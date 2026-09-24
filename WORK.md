@@ -199,8 +199,3 @@ After Step 4 (iOS) is done
 - 2026-09-24 — Android hardening (initial events, persistent queue, call state, watchdog, busy); LICENSE + package metadata.
 - 2026-09-24 — Step 4 iOS implemented (callkeep port); unit-tested on Linux; awaiting Mac build + device test.
 - 2026-09-24 — Pre-device review (Step 7d): duplicate/late push handling, API 26 + Android 14 FGS fixes, iOS AppDelegate entry point; TESTING.md written. Remaining: device testing per TESTING.md, then Step 9 publish.
-
-
-
-
-<!-- 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 -->
