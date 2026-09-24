@@ -70,3 +70,4 @@ captures
 .externalNativeBuild
 capacitor-callkit-plugin/
 .kilo/
+WORK.md
