@@ -230,6 +230,21 @@ export interface AndroidSetupOptions {
    * + Answer/Decline) in self-managed mode. Default: true.
    */
   showIncomingCallNotification?: boolean;
+  /**
+   * What the full-screen incoming-call alert opens over the lock screen:
+   * - `native` (default): the plugin's built-in call screen (caller + Answer / Decline). Shows
+   *   instantly and reliably over a secure lock screen; Answer then opens your app.
+   * - `app`: your app's own call page (listen to `incomingCall`). Needs the WebView to load first.
+   * Restyle / translate the native screen by overriding the `ionic_callkit_*` resources.
+   */
+  incomingCallScreen?: 'native' | 'app';
+  /**
+   * Ringtone file in `android/app/src/main/res/raw/` (name with or without extension).
+   * Default: the device ringtone. The plugin rings itself; silent / vibrate modes are respected.
+   */
+  ringtoneSound?: string;
+  /** Vibrate while ringing (unless the phone is on silent). Default: true. */
+  vibrate?: boolean;
   /** Small icon (drawable or mipmap resource name) for call notifications. */
   notificationIcon?: string;
   /** Channel name for incoming calls. Default: "Incoming calls". */

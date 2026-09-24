@@ -136,6 +136,14 @@ Code review of every device flow (push → ring → answer/decline → media →
 - [x] ~~Emulator re-run: duplicate push rings once; out-of-order `call_ended` then `incoming_call` doesn't ring; Hang Up from ongoing notification ends call + stops FGS; late push for ended call ignored; decline + push forwarding regression OK~~
 - [x] ~~Tests: Android 21 JVM, iOS 17 XCTest (Linux), web 13~~
 
+### ~~Step 7e — Android ringing + lock-screen fixes (reported from a real device)~~ ✅
+Reported: no ringtone / vibration; lock screen shows only the notification (no call UI).
+- [x] ~~`CallRinger`: plugin plays the device ringtone (looping, ringtone audio usage) + vibration itself, following ringer mode; stops on answer / decline / end / remote end / volume key (`onSilence`). Options `android.ringtoneSound` (res/raw), `android.vibrate`~~
+- [x] ~~Notification channel `ionic_callkit_incoming_v2` is silent (old sound channel deleted; channel settings are immutable)~~
+- [x] ~~`IncomingCallActivity`: native call screen with manifest `showWhenLocked` / `turnScreenOn` as the full-screen intent target (runtime flags on the app's activity were too late on secure lock screens). Answer → app over the lock screen; Decline → reject. `android.incomingCallScreen: 'app'` keeps the old behaviour. Strings/colors overridable (`ionic_callkit_*`)~~
+- [x] ~~Emulator with a PIN lock screen: killed app + screen off → native screen over the secure keyguard (occluded), ringtone playing + ringtone vibration; volume key silences; Answer → app over the lock screen, call active; backgrounded app → Decline stops ring + ends call; vibrate mode → vibration only~~
+- [ ] Re-test on the reporting device (TESTING.md 4, 4b, 5, 6) — if the screen still doesn't appear: Android 14+ full-screen intent permission (Home page row), and on Xiaomi/Oppo/Vivo the "Show on lock screen" / pop-up permission
+
 ### Step 4 — iOS (after Android)
 Ported from callkeep `ios/RNCallKeep/RNCallKeep.m` @ `90bc581`. Files in `ios/Sources/CallKitPlugin/`:
 

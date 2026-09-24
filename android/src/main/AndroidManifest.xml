@@ -53,5 +53,20 @@
         <receiver
             android:name="io.kreador.callkit.CallActionReceiver"
             android:exported="false" />
+
+        <!--
+          Native incoming-call screen (full-screen intent target). Declared show-when-locked so
+          Android shows it over a secure lock screen from the first frame. Own task, so it
+          doesn't bring the app's task forward until the call is answered.
+        -->
+        <activity
+            android:name="io.kreador.callkit.IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:taskAffinity="io.kreador.callkit.incoming"
+            android:theme="@style/IonicCallkit.IncomingCall"
+            android:turnScreenOn="true" />
     </application>
 </manifest>

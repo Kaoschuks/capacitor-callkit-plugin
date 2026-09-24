@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Override any of these in your app (same name) to localize or restyle the incoming-call screen. -->
+<resources>
+    <string name="ionic_callkit_incoming_call">Incoming call</string>
+    <string name="ionic_callkit_incoming_video_call">Incoming video call</string>
+    <string name="ionic_callkit_answer">Answer</string>
+    <string name="ionic_callkit_decline">Decline</string>
+
+    <color name="ionic_callkit_background">#FF1C1C1E</color>
+    <color name="ionic_callkit_primary_text">#FFFFFFFF</color>
+    <color name="ionic_callkit_secondary_text">#B3FFFFFF</color>
+    <color name="ionic_callkit_answer">#FF34C759</color>
+    <color name="ionic_callkit_decline">#FFFF3B30</color>
+
+    <style name="IonicCallkit.IncomingCall" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/ionic_callkit_background</item>
+        <item name="android:statusBarColor">@color/ionic_callkit_background</item>
+        <item name="android:navigationBarColor">@color/ionic_callkit_background</item>
+    </style>
+</resources>

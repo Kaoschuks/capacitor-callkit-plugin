@@ -248,6 +248,8 @@ public class CallConnection extends Connection {
 
         super.onSilence();
 
+        // Volume key pressed while ringing: stop the ringtone, keep the call ringing silently.
+        CallRinger.stop(getCallUuid());
         sendCallRequestToActivity(ACTION_ON_SILENCE_INCOMING_CALL, handle);
         Log.d(TAG, "[CallConnection] onSilence called");
     }

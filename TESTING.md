@@ -67,8 +67,9 @@ Mark each ✅/❌ per device. "Log" means the example app's event log (Home page
 | 1 | Token | Open app | Home shows the token; log has `setup ok` |
 | 2 | Ring, app open | Send ring push | Native incoming UI + ringtone; app navigates to the call screen; log: `incomingCall` |
 | 3 | Ring, app in background | Home button, send ring push | Heads-up call notification (Android) / CallKit banner (iOS) with Answer/Decline |
-| 4 | **Ring, app killed + phone locked** | Swipe the app away, lock the phone, wait 30 s, send ring push | Full-screen incoming call over the lock screen, ringtone loops |
-| 5 | Answer from lock screen | During 4, answer | **Android:** app opens over the lock screen on the call screen. **iOS:** CallKit in-call screen (app stays in background — expected). Log / `initial events`: `incomingCall … callAnswered` |
+| 4 | **Ring, app killed + phone locked** | Swipe the app away, lock the phone (PIN/fingerprint), wait 30 s, send ring push | Screen wakes; **Android:** native call screen (caller, Answer, Decline) over the lock screen; **iOS:** CallKit full-screen call. Device ringtone loops + vibration |
+| 4b | Ringer modes | Repeat 4 with the phone on vibrate, then silent; then press a volume key while ringing | Vibrate → vibration only; silent → no sound/vibration (call still shows); volume key → ringing stops, call keeps ringing silently |
+| 5 | Answer from lock screen | During 4, answer | **Android:** tap Answer on the native screen → app opens over the lock screen on the call screen (`active`), ringing stops. **iOS:** CallKit in-call screen (app stays in background — expected). Log / `initial events`: `incomingCall … callAnswered` |
 | 6 | Decline from lock screen | Repeat 4, decline | Ringing stops; `callRejected` |
 | 7 | Hang up from the system | Answer, then hang up from the ongoing-call notification (Android) / CallKit screen (iOS) | `callEnded`; Android ongoing notification disappears |
 | 8 | Hang up from the app | Answer, tap the red button in the app | `callEnded`; system call UI closes |

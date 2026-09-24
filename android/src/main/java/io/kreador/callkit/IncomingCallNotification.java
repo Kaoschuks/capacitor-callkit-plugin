@@ -12,9 +12,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioAttributes;
-import android.media.RingtoneManager;
-import android.net.Uri;
 import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -23,14 +20,17 @@ import androidx.core.app.Person;
 import org.json.JSONObject;
 
 /**
- * Ringing UI for self-managed calls: a full-screen intent over the lock screen plus a
- * CallStyle notification with Answer / Decline. Callkeep leaves this to JS
- * (showIncomingCallUi), which can't work when a push wakes a killed app.
+ * Ringing UI for self-managed calls: a CallStyle notification with Answer / Decline whose
+ * full-screen intent opens IncomingCallActivity over the lock screen, plus CallRinger.
+ * Callkeep leaves this to JS (showIncomingCallUi), which can't work when a push wakes a killed app.
  */
 public final class IncomingCallNotification {
 
     private static final String TAG = "IonicCallkit";
-    static final String CHANNEL_ID = "ionic_callkit_incoming";
+    // v2: silent channel — CallRinger plays the ringtone/vibration. Channel settings can't be
+    // changed once created, so the old (sound) channel is deleted and a new id is used.
+    static final String CHANNEL_ID = "ionic_callkit_incoming_v2";
+    private static final String OLD_CHANNEL_ID = "ionic_callkit_incoming";
 
     private IncomingCallNotification() {}
 
@@ -45,14 +45,22 @@ public final class IncomingCallNotification {
         String name = callerName != null && !callerName.isEmpty() ? callerName : (handle != null ? handle : "Unknown");
         Person caller = new Person.Builder().setName(name).setImportant(true).build();
 
-        PendingIntent fullScreen = launchPendingIntent(context, callId, LAUNCH_ACTION_SHOW_INCOMING);
+        // Full-screen target: the plugin's native screen (default) or the app's own page.
+        PendingIntent fullScreen = "app".equals(settings.optString("incomingCallScreen", "native"))
+            ? launchPendingIntent(context, callId, LAUNCH_ACTION_SHOW_INCOMING)
+            : PendingIntent.getActivity(
+                context,
+                (callId + "incomingScreen").hashCode(),
+                IncomingCallActivity.intent(context, callId, callerName, handle, hasVideo),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
         PendingIntent answer = launchPendingIntent(context, callId, LAUNCH_ACTION_ANSWER);
         PendingIntent decline = CallActionReceiver.pendingIntent(context, callId, ACTION_NOTIFICATION_DECLINE);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(smallIcon(context, settings.optString("notificationIcon", "")))
             .setContentTitle(name)
-            .setContentText(hasVideo ? "Incoming video call" : "Incoming call")
+            .setContentText(context.getString(hasVideo ? R.string.ionic_callkit_incoming_video_call : R.string.ionic_callkit_incoming_call))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -64,14 +72,13 @@ public final class IncomingCallNotification {
             .addPerson(caller);
 
         Notification notification = builder.build();
-        // Keep ringing until the user acts (channel sound otherwise plays once).
-        notification.flags |= Notification.FLAG_INSISTENT;
 
         try {
             NotificationManagerCompat.from(context).notify(notificationId(callId), notification);
         } catch (SecurityException e) {
             Log.w(TAG, "[IncomingCallNotification] POST_NOTIFICATIONS not granted: " + e.getMessage());
         }
+        CallRinger.start(context, callId);
     }
 
     public static void cancel(Context context, @Nullable String callId) {
@@ -79,6 +86,8 @@ public final class IncomingCallNotification {
             return;
         }
         NotificationManagerCompat.from(context).cancel(notificationId(callId));
+        CallRinger.stop(callId);
+        IncomingCallActivity.dismiss(callId);
     }
 
     static PendingIntent launchPendingIntent(Context context, String callId, String launchAction) {
@@ -105,24 +114,20 @@ public final class IncomingCallNotification {
 
     private static void ensureChannel(Context context, JSONObject settings) {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm.getNotificationChannel(OLD_CHANNEL_ID) != null) {
+            nm.deleteNotificationChannel(OLD_CHANNEL_ID);
+        }
         if (nm.getNotificationChannel(CHANNEL_ID) != null) {
             return;
         }
+        // High importance for heads-up + full-screen; silent because CallRinger rings.
         NotificationChannel channel = new NotificationChannel(
             CHANNEL_ID,
             settings.optString("incomingCallChannelName", "Incoming calls"),
             NotificationManager.IMPORTANCE_HIGH
         );
-        Uri ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-        channel.setSound(
-            ringtone,
-            new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-        );
-        channel.enableVibration(true);
-        channel.setVibrationPattern(new long[] { 0, 1000, 1000 });
+        channel.setSound(null, null);
+        channel.enableVibration(false);
         channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         nm.createNotificationChannel(channel);
     }
